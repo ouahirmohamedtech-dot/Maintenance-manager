@@ -11,7 +11,29 @@ const DB='maintenance-manager-db',VER=8,STORES=['interventions','finance','sites
 const labels={fr:{dashboard:'Tableau de bord',payments:'Paiements',checks:'Chèques',cash:'Espèces',contacts:'Contacts',companies:'Sociétés émettrices',invoices:'Factures',repairs:'Réparations',deadlines:'Échéances',categories:'Catégories',budgets:'Budgets',reports:'Rapports',settings:'Paramètres'},ar:{dashboard:'لوحة القيادة',payments:'المدفوعات',checks:'الشيكات',cash:'النقد',contacts:'الحرفيون والموردون',companies:'الشركات المصدرة',invoices:'الفواتير',repairs:'الإصلاحات',deadlines:'الاستحقاقات',categories:'التصنيفات',budgets:'الميزانيات',reports:'التقارير',settings:'الإعدادات'}};const pages=Object.keys(labels.fr);
 function req(r){return new Promise((res,rej)=>{r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}function txdone(t){return new Promise((res,rej)=>{t.oncomplete=()=>res();t.onerror=()=>rej(t.error);t.onabort=()=>rej(t.error)})}
 async function all(store){return req(db.transaction(store).objectStore(store).getAll())}async function put(store,obj){let t=db.transaction(store,'readwrite');t.objectStore(store).put(obj);return txdone(t)}async function del(store,id){let t=db.transaction(store,'readwrite');t.objectStore(store).delete(id);return txdone(t)}
-async function initDB(){db=await new Promise((res,rej)=>{let r=indexedDB.open(DB,VER);r.onupgradeneeded=()=>{let d=r.result;for(let s of STORES)if(!d.objectStoreNames.contains(s))d.createObjectStore(s,{keyPath:s==='sites'?'name':'id'});};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});for(let s of STORES)cache[s]=await all(s);}
+function makeLocalStorageDB(){
+ const key=s=>'gmp_fallback_'+s;
+ return {transaction(store,mode='readonly'){
+  const tx={error:null,objectStore(){return {
+   getAll(){const q={result:null,error:null};setTimeout(()=>{try{q.result=JSON.parse(localStorage.getItem(key(store))||'[]');q.onsuccess&&q.onsuccess()}catch(e){q.error=e;q.onerror&&q.onerror()}},0);return q},
+   put(obj){setTimeout(()=>{try{const a=JSON.parse(localStorage.getItem(key(store))||'[]');const kp=store==='sites'?'name':'id';const i=a.findIndex(x=>x[kp]===obj[kp]);if(i<0)a.push(obj);else a[i]=obj;localStorage.setItem(key(store),JSON.stringify(a));tx.oncomplete&&tx.oncomplete()}catch(e){tx.error=e;tx.onerror&&tx.onerror()}},0);return {}},
+   delete(id){setTimeout(()=>{try{const kp=store==='sites'?'name':'id';const a=JSON.parse(localStorage.getItem(key(store))||'[]').filter(x=>x[kp]!==id);localStorage.setItem(key(store),JSON.stringify(a));tx.oncomplete&&tx.oncomplete()}catch(e){tx.error=e;tx.onerror&&tx.onerror()}},0);return {}}
+  }}};return tx;
+ }};
+}
+async function initDB(){
+ try{
+  if(!window.indexedDB)throw new Error('IndexedDB indisponible dans ce navigateur');
+  db=await new Promise((res,rej)=>{let r;try{r=indexedDB.open(DB,VER)}catch(e){rej(e);return}r.onupgradeneeded=()=>{let d=r.result;for(let s of STORES)if(!d.objectStoreNames.contains(s))d.createObjectStore(s,{keyPath:s==='sites'?'name':'id'});};r.onsuccess=()=>{let d=r.result;d.onversionchange=()=>d.close();res(d)};r.onerror=()=>rej(r.error||new Error('Erreur IndexedDB'));r.onblocked=()=>rej(new Error('La base est utilisée par un autre onglet. Fermez les autres onglets de cette application puis rechargez.'))});
+  for(let s of STORES)cache[s]=await all(s);
+  return 'indexeddb';
+ }catch(err){
+  console.warn('IndexedDB indisponible, passage au stockage local de secours:',err);
+  db=makeLocalStorageDB();
+  for(let s of STORES)cache[s]=await all(s);
+  return 'localstorage';
+ }
+}
 const get=(s)=>cache[s]||[];async function reload(){for(let s of STORES)cache[s]=await all(s)}function nav(){ $('nav').innerHTML=pages.map(p=>`<button class="${page===p?'active':''}" onclick="go('${p}')">${labels[lang][p]}</button>`).join('')}
 function go(p){page=p;nav();render()}function siteOpts(){let a=get('sites').map(x=>x.name);for(let x of ['Hôtel 1','Hôtel 2','Restaurant'])if(!a.includes(x))a.push(x);return a.map(x=>`<option>${esc(x)}</option>`).join('')}
 function contactOpts(){return get('contacts').map(x=>`<option value="${esc(x.id)}">${esc(x.name)} — ${esc(x.type)}</option>`).join('')}function companyOpts(){return get('companies').map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')}
@@ -47,5 +69,5 @@ function backup(){let data={version:1,exportedAt:new Date().toISOString()};for(l
 function exportCSV(){let rows=[['Date','Beneficiaire','Mode','Societe emettrice','Numero cheque','Montant DH','Facture recue','Numero facture']];for(let x of get('payments'))rows.push([x.date,nameContact(x.contactId)||x.beneficiary,x.method,nameCompany(x.companyId),x.checkNo,x.amount,x.invoiceReceived,x.invoiceNo]);let csv='\ufeff'+rows.map(r=>r.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(';')).join('\n');let a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='paiements-'+today()+'.csv';a.click()}
 function setLang(){document.documentElement.dir=lang==='ar'?'rtl':'ltr';document.documentElement.lang=lang;$('langBtn').textContent=lang==='fr'?'العربية':'Français';nav();render()}$('langBtn').onclick=()=>{lang=lang==='fr'?'ar':'fr';setLang()};$('backupBtn').onclick=backup;window.go=go;window.addRecord=addRecord;window.editRecord=editRecord;window.removeRecord=removeRecord;window.closeDlg=closeDlg;window.backup=backup;window.restore=restore;window.addSite=addSite;window.deleteSite=deleteSite;window.exportCSV=exportCSV;
 async function migrateLegacy(){let oldItems=await all('interventions'),oldFinance=await all('finance');for(let x of oldItems){if(!get('repairs').some(r=>r.id===x.id)){await put('repairs',{id:x.id,title:x.problem||'Intervention existante',site:x.site||'Hôtel 1',place:x.place||'',type:x.area||'Autre',date:x.date||today(),status:x.status==='Terminé'?'Terminée':(x.status||'En attente'),description:x.notes||'',provider:x.responsible||'',cost:0,finalCost:0,legacy:true});}}for(let c of oldFinance){let cid='legacy-'+c.id;if(!get('contacts').some(x=>x.id===cid)){await put('contacts',{id:cid,name:c.name||'Contact existant',type:'Artisan',specialty:c.specialty||c.work||'',phone:c.phone||'',address:'',notes:c.notes||'Importé de l’ancienne version'});}for(let p of (c.payments||[])){let pid='legacy-'+p.id;if(!get('payments').some(x=>x.id===pid)){await put('payments',{id:pid,contactId:cid,beneficiary:c.name||'',method:'À préciser',amount:Number(p.amount)||0,date:p.date||today(),notes:p.note||'Paiement importé de l’ancienne version'});}}}await reload();}
-initDB().then(async()=>{await migrateLegacy();nav();render()}).catch(e=>{console.error(e);$('view').innerHTML=empty('Impossible d’ouvrir le stockage local. Essayez avec un navigateur récent.')});
+initDB().then(async(mode)=>{await migrateLegacy();nav();render();if(mode==='localstorage'){$('view').insertAdjacentHTML('afterbegin',`<div class="panel" style="border-color:#e7c98d;background:#fff9e9;margin-bottom:12px"><b>Mode de stockage de secours activé</b><p class="meta">Le navigateur a refusé IndexedDB. L’application fonctionne avec le stockage local de secours de cet appareil. Exportez régulièrement une sauvegarde JSON. Vos anciennes données IndexedDB ne sont pas effacées.</p></div>`)}}).catch(e=>{console.error(e);$('view').innerHTML=empty('Erreur de stockage : '+esc(e?.message||e))});
 </script></body></html>
