@@ -45,7 +45,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 const DB='maintenance-manager-db',STORE='interventions',FIN='finance';let db,items=[],contractors=[],lang='fr';const $=id=>document.getElementById(id);const today=()=>new Date().toISOString().slice(0,10);
-const SUPABASE_URL='https://iyhznekjxomlxypingok.supabase.co';
+const SUPABASE_URL='https://iyhznekjxomlxypinqok.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY='sb_publishable_F3x3ioQ8k4qV0bTv_NHJ4w_5IXvqp6l';
 const cloudClient=window.supabase.createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);let cloudSession=null;
 const money=n=>(Number(n)||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' DH';
